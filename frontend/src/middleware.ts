@@ -2,16 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const session = request.cookies.get("session");
 
   if (
-    pathname.startsWith("/login") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon")
   ) {
     return NextResponse.next();
   }
 
-  const session = request.cookies.get("session");
+  if (pathname.startsWith("/login")) {
+    if (session?.value) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    return NextResponse.next();
+  }
+
   if (!session?.value) {
     return NextResponse.redirect(new URL("/login", request.url));
   }

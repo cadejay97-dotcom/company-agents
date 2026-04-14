@@ -10,8 +10,35 @@ interface Chunk {
   created_at: string;
 }
 
+type DisplayItem =
+  | { type: "event"; key: string; chunk: Chunk }
+  | { type: "text"; key: string; text: string };
+
 function textValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function buildDisplayItems(chunks: Chunk[]): DisplayItem[] {
+  const items: DisplayItem[] = [];
+
+  for (const chunk of chunks) {
+    if (chunk.chunk_type !== "chunk") {
+      items.push({ type: "event", key: `event-${chunk.id}`, chunk });
+      continue;
+    }
+
+    const text = textValue(chunk.content?.text);
+    if (!text) continue;
+
+    const previous = items[items.length - 1];
+    if (previous?.type === "text") {
+      previous.text += text;
+    } else {
+      items.push({ type: "text", key: `text-${chunk.id}`, text });
+    }
+  }
+
+  return items;
 }
 
 function renderChunk(chunk: Chunk) {
@@ -61,6 +88,7 @@ export function Terminal({ taskId }: { taskId: string }) {
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [loadError, setLoadError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const displayItems = buildDisplayItems(chunks);
 
   useEffect(() => {
     let alive = true;
@@ -120,9 +148,13 @@ export function Terminal({ taskId }: { taskId: string }) {
         {!chunks.length && !loadError ? (
           <div className="text-stone-600">等待 Agent 输出</div>
         ) : null}
-        {chunks.map((chunk, index) => (
-          <div key={`${chunk.id}-${index}`} className="whitespace-pre-wrap break-words">
-            {renderChunk(chunk)}
+        {displayItems.map((item) => (
+          <div key={item.key} className="whitespace-pre-wrap break-words">
+            {item.type === "text" ? (
+              <span className="text-stone-100">{item.text}</span>
+            ) : (
+              renderChunk(item.chunk)
+            )}
           </div>
         ))}
         <div ref={bottomRef} />
