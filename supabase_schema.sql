@@ -26,6 +26,22 @@ CREATE TABLE IF NOT EXISTS task_chunks (
 ALTER TABLE tasks       REPLICA IDENTITY FULL;
 ALTER TABLE task_chunks REPLICA IDENTITY FULL;
 
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.tasks;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN RAISE NOTICE 'supabase_realtime publication not found; enable Realtime from Supabase dashboard';
+END $$;
+
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.task_chunks;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN RAISE NOTICE 'supabase_realtime publication not found; enable Realtime from Supabase dashboard';
+END $$;
+
 -- RLS：后端用 service_role key（完全权限），前端用 anon key（只读）
 ALTER TABLE tasks       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE task_chunks ENABLE ROW LEVEL SECURITY;

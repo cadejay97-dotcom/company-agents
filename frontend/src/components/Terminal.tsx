@@ -18,6 +18,17 @@ function textValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
+function mergeChunks(current: Chunk[], incoming: Chunk[]) {
+  const byId = new Map<number, Chunk>();
+  for (const chunk of current) byId.set(chunk.id, chunk);
+  for (const chunk of incoming) byId.set(chunk.id, chunk);
+  return Array.from(byId.values()).sort((a, b) => a.id - b.id);
+}
+
+function isTerminalChunk(chunk: Chunk) {
+  return chunk.chunk_type === "done" || chunk.chunk_type === "error";
+}
+
 function buildDisplayItems(chunks: Chunk[]): DisplayItem[] {
   const items: DisplayItem[] = [];
 
@@ -87,25 +98,45 @@ function renderChunk(chunk: Chunk) {
 export function Terminal({ taskId }: { taskId: string }) {
   const [chunks, setChunks] = useState<Chunk[]>([]);
   const [loadError, setLoadError] = useState("");
+  const [realtimeStatus, setRealtimeStatus] = useState("connecting");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const terminalSeenRef = useRef(false);
   const displayItems = buildDisplayItems(chunks);
 
   useEffect(() => {
     let alive = true;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
 
-    supabase
-      .from("task_chunks")
-      .select("*")
-      .eq("task_id", taskId)
-      .order("id")
-      .then(({ data, error }) => {
-        if (!alive) return;
-        if (error) {
-          setLoadError(error.message);
-          return;
-        }
-        if (data) setChunks(data as Chunk[]);
-      });
+    async function loadChunks() {
+      const { data, error } = await supabase
+        .from("task_chunks")
+        .select("*")
+        .eq("task_id", taskId)
+        .order("id");
+
+      if (!alive) return;
+      if (error) {
+        setLoadError(error.message);
+        return;
+      }
+      if (data) {
+        setLoadError("");
+        setChunks((prev) => {
+          const merged = mergeChunks(prev, data as Chunk[]);
+          terminalSeenRef.current = merged.some(isTerminalChunk);
+          return merged;
+        });
+      }
+    }
+
+    loadChunks();
+    pollTimer = setInterval(() => {
+      if (terminalSeenRef.current) {
+        if (pollTimer) clearInterval(pollTimer);
+        return;
+      }
+      loadChunks();
+    }, 1500);
 
     const channel = supabase
       .channel(`task_chunks:${taskId}`)
@@ -118,13 +149,20 @@ export function Terminal({ taskId }: { taskId: string }) {
           filter: `task_id=eq.${taskId}`,
         },
         (payload) => {
-          setChunks((prev) => [...prev, payload.new as Chunk]);
+          setChunks((prev) => {
+            const merged = mergeChunks(prev, [payload.new as Chunk]);
+            terminalSeenRef.current = merged.some(isTerminalChunk);
+            return merged;
+          });
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (alive) setRealtimeStatus(status.toLowerCase());
+      });
 
     return () => {
       alive = false;
+      if (pollTimer) clearInterval(pollTimer);
       supabase.removeChannel(channel);
     };
   }, [taskId]);
@@ -139,7 +177,9 @@ export function Terminal({ taskId }: { taskId: string }) {
         <span className="font-mono text-xs uppercase tracking-wide text-stone-500">
           task_chunks/{taskId}
         </span>
-        <span className="text-xs text-stone-500">{chunks.length} chunks</span>
+        <span className="text-xs text-stone-500">
+          {chunks.length} chunks · {realtimeStatus === "subscribed" ? "realtime" : "polling"}
+        </span>
       </div>
       <div className="h-[34rem] overflow-y-auto p-4 font-mono text-sm leading-7">
         {loadError ? (
