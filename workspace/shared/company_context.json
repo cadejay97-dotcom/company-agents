@@ -1,0 +1,8 @@
+{
+  "company": "你的公司名",
+  "product": "你的产品描述",
+  "tech_stack": ["Python", "React", "PostgreSQL"],
+  "team_size": 5,
+  "current_sprint": "Sprint 12",
+  "notes": "在这里放公司背景信息，所有 Agent 都可以读取"
+}

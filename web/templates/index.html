@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>公司智能体飞轮</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #0d0d0d; color: #e2e8f0; font-family: 'SF Pro Text', -apple-system, sans-serif; }
+
+    /* 终端输出区 */
+    #terminal {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .term-chunk  { color: #a3e635; }
+    .term-tool   { color: #38bdf8; }
+    .term-start  { color: #f59e0b; font-weight: 600; }
+    .term-done   { color: #34d399; font-weight: 600; }
+    .term-error  { color: #f87171; }
+
+    /* Agent 卡片 */
+    .agent-card {
+      border: 1px solid #1e1e1e;
+      background: #141414;
+      transition: all 0.15s;
+      cursor: pointer;
+    }
+    .agent-card:hover  { border-color: #374151; background: #1a1a1a; }
+    .agent-card.active { border-color: #4ade80; background: #0f2010; }
+
+    /* 任务状态徽章 */
+    .badge-pending  { background: #1c2030; color: #93c5fd; }
+    .badge-running  { background: #1c1e10; color: #a3e635; }
+    .badge-done     { background: #0f2010; color: #34d399; }
+    .badge-failed   { background: #2a0f0f; color: #f87171; }
+
+    /* 滚动条 */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+
+    /* 运行按钮动画 */
+    @keyframes pulse-green {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.4); }
+      50%       { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
+    }
+    #run-btn.running { animation: pulse-green 1.5s infinite; }
+  </style>
+</head>
+<body class="h-full flex flex-col">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between px-6 py-3 border-b border-zinc-800">
+    <div class="flex items-center gap-3">
+      <span class="text-lg font-semibold tracking-tight">⚡ 公司智能体飞轮</span>
+      <span id="status-badge" class="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400">待命</span>
+    </div>
+    <div class="flex items-center gap-4 text-xs text-zinc-500">
+      <span id="queue-summary">—</span>
+      <button onclick="refreshTasks()"
+        class="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition">
+        刷新队列
+      </button>
+    </div>
+  </header>
+
+  <!-- Main 三栏布局 -->
+  <main class="flex flex-1 overflow-hidden">
+
+    <!-- 左栏：Agent 列表 -->
+    <aside class="w-52 flex-shrink-0 border-r border-zinc-800 overflow-y-auto p-3 flex flex-col gap-2">
+      <p class="text-xs text-zinc-500 px-1 mb-1 uppercase tracking-wider">Agents</p>
+      {% for agent in agents %}
+      <div class="agent-card rounded-lg p-3"
+           data-type="{{ agent.type }}"
+           onclick="selectAgent('{{ agent.type }}')">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-base">{{ agent.icon }}</span>
+          <span class="text-sm font-medium text-zinc-200">{{ agent.label }}</span>
+        </div>
+        <p class="text-xs text-zinc-500 leading-snug">{{ agent.desc }}</p>
+      </div>
+      {% endfor %}
+    </aside>
+
+    <!-- 中栏：输入 + 终端 -->
+    <section class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- 输入区 -->
+      <div class="p-4 border-b border-zinc-800 flex gap-3 items-start">
+        <div class="flex-1 flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-zinc-500">当前 Agent：</span>
+            <span id="selected-agent-label"
+              class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+              未选择（点击左侧卡片）
+            </span>
+          </div>
+          <textarea id="task-input"
+            class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200
+                   placeholder-zinc-600 focus:outline-none focus:border-zinc-500 resize-none"
+            rows="3"
+            placeholder="描述你要完成的任务...&#10;例如：拆解「用户评论情感分析」功能的开发需求，评估优先级"></textarea>
+        </div>
+        <button id="run-btn"
+          onclick="runTask()"
+          class="px-5 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white font-medium
+                 text-sm transition disabled:opacity-40 disabled:cursor-not-allowed mt-6">
+          运行
+        </button>
+      </div>
+
+      <!-- 终端输出 -->
+      <div class="flex-1 overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
+          <span class="text-xs text-zinc-500 font-mono">输出终端</span>
+          <button onclick="clearTerminal()"
+            class="text-xs text-zinc-600 hover:text-zinc-400 transition">清空</button>
+        </div>
+        <div id="terminal"
+          class="flex-1 overflow-y-auto p-4 whitespace-pre-wrap break-words">
+          <span class="text-zinc-600">// 选择一个 Agent，输入任务描述，点击运行...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右栏：任务队列 -->
+    <aside class="w-64 flex-shrink-0 border-l border-zinc-800 overflow-y-auto flex flex-col">
+      <div class="px-4 py-3 border-b border-zinc-800">
+        <p class="text-xs text-zinc-500 uppercase tracking-wider">任务队列</p>
+      </div>
+      <div id="task-list" class="flex-1 p-3 flex flex-col gap-2">
+        <p class="text-xs text-zinc-600 text-center mt-4">暂无任务</p>
+      </div>
+    </aside>
+
+  </main>
+
+  <script>
+    let selectedAgentType = null;
+    let isRunning = false;
+
+    const AGENT_LABELS = {
+      {% for agent in agents %}
+      "{{ agent.type }}": "{{ agent.icon }} {{ agent.label }}",
+      {% endfor %}
+    };
+
+    // ── Agent 选择 ────────────────────────────────────────────────────────────
+    function selectAgent(type) {
+      selectedAgentType = type;
+      document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('active'));
+      document.querySelector(`[data-type="${type}"]`).classList.add('active');
+      document.getElementById('selected-agent-label').textContent = AGENT_LABELS[type] || type;
+    }
+
+    // ── 运行任务 ──────────────────────────────────────────────────────────────
+    async function runTask() {
+      if (isRunning) return;
+      const desc = document.getElementById('task-input').value.trim();
+      if (!selectedAgentType) { termPrint('请先选择一个 Agent', 'error'); return; }
+      if (!desc)               { termPrint('请输入任务描述', 'error'); return; }
+
+      setRunning(true);
+      clearTerminal();
+      termPrint(`▶ 启动 ${AGENT_LABELS[selectedAgentType]}`, 'start');
+      termPrint(`任务: ${desc.slice(0, 80)}${desc.length > 80 ? '...' : ''}\n`, 'start');
+
+      try {
+        // 1. 提交任务
+        const res = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_type: selectedAgentType, description: desc }),
+        });
+        const { task_id, error } = await res.json();
+        if (error) { termPrint(`错误: ${error}`, 'error'); setRunning(false); return; }
+
+        // 2. 订阅 SSE 流
+        const evtSource = new EventSource(`/api/stream/${task_id}`);
+        evtSource.onmessage = (e) => {
+          if (e.data === '[DONE]') {
+            evtSource.close();
+            setRunning(false);
+            refreshTasks();
+            return;
+          }
+          try {
+            const event = JSON.parse(e.data);
+            handleEvent(event);
+          } catch {}
+        };
+        evtSource.onerror = () => {
+          evtSource.close();
+          setRunning(false);
+          refreshTasks();
+        };
+
+      } catch (err) {
+        termPrint(`网络错误: ${err.message}`, 'error');
+        setRunning(false);
+      }
+    }
+
+    function handleEvent(event) {
+      if (event.type === 'chunk') {
+        termAppend(event.text, 'chunk');
+      } else if (event.type === 'tool') {
+        termPrint(`\n→ 调用工具: ${event.name}`, 'tool');
+        if (event.result) termPrint(`  结果: ${event.result.slice(0, 120)}`, 'tool');
+      } else if (event.type === 'done') {
+        termPrint(`\n✓ 完成，输出已保存`, 'done');
+      } else if (event.type === 'error') {
+        termPrint(`\n✗ 错误: ${event.message}`, 'error');
+      }
+    }
+
+    // ── 终端渲染 ──────────────────────────────────────────────────────────────
+    let currentChunkSpan = null;
+
+    function termAppend(text, cls) {
+      const term = document.getElementById('terminal');
+      if (!currentChunkSpan || currentChunkSpan.className !== `term-${cls}`) {
+        currentChunkSpan = document.createElement('span');
+        currentChunkSpan.className = `term-${cls}`;
+        term.appendChild(currentChunkSpan);
+      }
+      currentChunkSpan.textContent += text;
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function termPrint(text, cls = 'chunk') {
+      currentChunkSpan = null;
+      const term = document.getElementById('terminal');
+      const span = document.createElement('span');
+      span.className = `term-${cls}`;
+      span.textContent = text + '\n';
+      term.appendChild(span);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function clearTerminal() {
+      currentChunkSpan = null;
+      document.getElementById('terminal').innerHTML =
+        '<span class="text-zinc-600">// 选择一个 Agent，输入任务描述，点击运行...</span>';
+    }
+
+    // ── 状态控制 ──────────────────────────────────────────────────────────────
+    function setRunning(running) {
+      isRunning = running;
+      const btn = document.getElementById('run-btn');
+      const badge = document.getElementById('status-badge');
+      btn.disabled = running;
+      btn.classList.toggle('running', running);
+      btn.textContent = running ? '运行中...' : '运行';
+      badge.textContent = running ? '● 运行中' : '待命';
+      badge.className = running
+        ? 'text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-400'
+        : 'text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400';
+    }
+
+    // ── 任务队列 ──────────────────────────────────────────────────────────────
+    async function refreshTasks() {
+      try {
+        const res = await fetch('/api/tasks');
+        const { tasks } = await res.json();
+        renderTaskList(tasks);
+        const counts = tasks.reduce((acc, t) => { acc[t.status] = (acc[t.status]||0)+1; return acc; }, {});
+        document.getElementById('queue-summary').textContent =
+          `共 ${tasks.length} 条 · 完成 ${counts.done||0} · 待处理 ${counts.pending||0}`;
+      } catch {}
+    }
+
+    function renderTaskList(tasks) {
+      const el = document.getElementById('task-list');
+      if (!tasks.length) {
+        el.innerHTML = '<p class="text-xs text-zinc-600 text-center mt-4">暂无任务</p>';
+        return;
+      }
+      el.innerHTML = [...tasks].reverse().map(t => `
+        <div class="rounded-lg p-3 bg-zinc-900 border border-zinc-800 cursor-pointer hover:border-zinc-600 transition"
+             onclick="viewOutput('${t.id}')">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs font-mono text-zinc-500">#${t.id}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded badge-${t.status}">${statusLabel(t.status)}</span>
+          </div>
+          <p class="text-xs text-zinc-300 leading-snug line-clamp-2">${t.description.slice(0, 60)}</p>
+          <p class="text-xs text-zinc-600 mt-1">${t.type}</p>
+        </div>
+      `).join('');
+    }
+
+    function statusLabel(s) {
+      return { pending: '等待', running: '运行中', done: '完成', failed: '失败' }[s] || s;
+    }
+
+    async function viewOutput(taskId) {
+      try {
+        const res = await fetch(`/api/outputs/${taskId}`);
+        const { content, error } = await res.json();
+        if (error) { termPrint(`无输出文件: ${taskId}`, 'error'); return; }
+        clearTerminal();
+        termPrint(`── 历史输出: #${taskId} ──\n`, 'start');
+        termAppend(content, 'chunk');
+      } catch {}
+    }
+
+    // ── Enter 快捷键 ──────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('task-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runTask();
+      });
+      refreshTasks();
+      setInterval(refreshTasks, 5000); // 每 5 秒自动刷新队列
+    });
+  </script>
+</body>
+</html>

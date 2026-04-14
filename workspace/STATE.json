@@ -1,0 +1,29 @@
+{
+  "_meta": {
+    "description": "单一事实源。所有 Agent 执行前必须读取此文件，了解当前系统目标与约束。",
+    "last_updated": "2026-04-14",
+    "updated_by": "human"
+  },
+  "current_goal": "跑通一个真实生产闭环，让系统能沉淀资产、被评测、越跑越强",
+  "active_project": "company-agents",
+  "phase": "governance_layer_setup",
+  "constraints": [
+    "判断层最终裁决权保留给人类或人类定义的标准函数",
+    "验证层返回 FAIL 时，下游任务必须中止",
+    "所有决策必须记录在 DECISIONS.md"
+  ],
+  "eliminated_options": [
+    "按旧公司部门（市场/销售/运营/人事）拆分 Agent 作为底层主结构"
+  ],
+  "active_tasks": [],
+  "last_decision": null,
+  "blockers": [],
+  "layer_assignments": {
+    "perception": ["requirements_analyst", "summarizer"],
+    "judgment": ["judgment"],
+    "generation": ["doc_refactor", "product_page"],
+    "validation": ["code_scanner", "tester"],
+    "exchange": ["sales"],
+    "governance": ["task_tracker"]
+  }
+}

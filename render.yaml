@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: company-agents
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn web.app:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 300 --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false          # 在 Render 控制台手动填写
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false          # 填 Vercel 域名，如 https://你的项目.vercel.app

@@ -1,0 +1,21 @@
+schedules:
+  - name: 每日任务追踪
+    cron: "0 9 * * mon-fri"
+    task_type: task_tracking
+    description: "扫描队列，生成今日优先级报告"
+
+  - name: 每周汇总
+    cron: "0 18 * * fri"
+    task_type: summarize
+    description: "汇总本周所有 Agent 产出，生成周报"
+
+webhooks:
+  - name: 新代码提交
+    path: /webhook/code-push
+    task_type: code_scan
+    description_template: "扫描最新提交的代码变更: {ref}"
+
+  - name: 新需求文档
+    path: /webhook/new-requirement
+    task_type: requirements_analysis
+    description_template: "拆解新需求: {title}"
