@@ -1,5 +1,6 @@
 import { AgentGrid } from "@/components/AgentGrid";
 import { NavBar } from "@/components/NavBar";
+import { StatePanel } from "@/components/StatePanel";
 
 export default function DashboardPage() {
   return (
@@ -15,6 +16,7 @@ export default function DashboardPage() {
             选择 Agent，填入意图，系统会创建任务、写入队列，并把过程输出同步到实时终端。
           </p>
         </div>
+        <StatePanel />
         <AgentGrid />
       </main>
     </div>

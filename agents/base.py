@@ -1,17 +1,20 @@
 """
 BaseAgent — 所有专业 Agent 的基类
-- 提示词缓存 (system prompt cache)
+- DeepSeek API（OpenAI 兼容接口）
 - 流式输出
 - 工具调用循环
 - 自动写入输出到 workspace/outputs/{agent_name}/
 """
 
-import anthropic
 import json
+import os
 from pathlib import Path
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
 from datetime import datetime
+from dotenv import load_dotenv
+from openai import OpenAI
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 from core.tools import TOOL_DEFINITIONS, TOOL_REGISTRY
 
 WORKSPACE = Path(__file__).parent.parent / "workspace"
@@ -34,6 +37,21 @@ def _load_state() -> str:
         return ""
 
 
+def _to_openai_tools(tool_defs: list) -> list:
+    """将 Anthropic 格式工具定义转换为 OpenAI 格式"""
+    result = []
+    for t in tool_defs:
+        result.append({
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
+            },
+        })
+    return result
+
+
 class BaseAgent:
     """
     继承此类，只需提供：
@@ -49,8 +67,12 @@ class BaseAgent:
     extra_registry: dict = {}
 
     def __init__(self):
-        self.client = anthropic.Anthropic()
-        self.tools = TOOL_DEFINITIONS + self.extra_tools
+        self.client = OpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com",
+        )
+        self._raw_tools = TOOL_DEFINITIONS + self.extra_tools
+        self.tools = _to_openai_tools(self._raw_tools)
         self.registry = {**TOOL_REGISTRY, **self.extra_registry}
         self._output_dir = WORKSPACE / "outputs" / self.name
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -72,19 +94,36 @@ class BaseAgent:
         final_output = ""
 
         for step in range(20):  # 最多 20 轮工具调用
-            response = self._call_api(messages, on_chunk=on_chunk)
+            text, tool_calls, finish_reason = self._call_api(messages, on_chunk=on_chunk)
 
-            text_blocks = [b.text for b in response.content if b.type == "text"]
-            if text_blocks:
-                final_output = "\n".join(text_blocks)
+            if text:
+                final_output = text
 
-            if response.stop_reason == "end_turn":
+            if finish_reason == "stop":
                 break
 
-            if response.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": response.content})
-                tool_results = self._execute_tools(response.content, on_chunk=on_chunk)
-                messages.append({"role": "user", "content": tool_results})
+            if finish_reason == "tool_calls" and tool_calls:
+                # 把 assistant 这一轮加入历史
+                messages.append({
+                    "role": "assistant",
+                    "content": text or None,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                        }
+                        for tc in tool_calls
+                    ],
+                })
+                # 执行工具，把结果加入历史
+                for tc in tool_calls:
+                    result_text = self._execute_one_tool(tc["name"], tc["arguments"], on_chunk=on_chunk)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_text,
+                    })
             else:
                 break
 
@@ -131,54 +170,70 @@ class BaseAgent:
                     return verdict.lower()
         return None
 
-    def _call_api(self, messages: list, on_chunk=None) -> anthropic.types.Message:
-        """调用 API，带提示词缓存 + 流式推送"""
-        with self.client.messages.stream(
-            model="claude-opus-4-6",
-            max_tokens=16000,
-            thinking={"type": "adaptive"},
-            system=[
-                {
-                    "type": "text",
-                    "text": self.role,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=self.tools,
-            messages=messages,
-        ) as stream:
-            for event in stream:
-                if (on_chunk
-                        and event.type == "content_block_delta"
-                        and hasattr(event.delta, "text")):
-                    on_chunk({"type": "chunk", "text": event.delta.text})
-            return stream.get_final_message()
+    def _call_api(self, messages: list, on_chunk=None) -> tuple[str, list, str]:
+        """
+        调用 DeepSeek API，流式收集响应。
+        返回 (text, tool_calls, finish_reason)
+        tool_calls: [{"id": ..., "name": ..., "arguments": ...}]
+        """
+        system_messages = [{"role": "system", "content": self.role}]
 
-    def _execute_tools(self, content_blocks, on_chunk=None) -> list[dict]:
-        """执行所有 tool_use block，返回 tool_result list"""
-        results = []
-        for block in content_blocks:
-            if block.type != "tool_use":
-                continue
-            fn = self.registry.get(block.name)
-            if fn is None:
-                result_text = f"[错误] 未知工具: {block.name}"
-            else:
-                try:
-                    result_text = str(fn(**block.input))
-                except Exception as e:
-                    result_text = f"[工具执行错误] {block.name}: {e}"
+        stream = self.client.chat.completions.create(
+            model="deepseek-chat",
+            max_tokens=8000,
+            messages=system_messages + messages,
+            tools=self.tools if self.tools else None,
+            tool_choice="auto" if self.tools else None,
+            stream=True,
+        )
 
-            print(f"  → 工具: {block.name} → {result_text[:80]}")
-            if on_chunk:
-                on_chunk({"type": "tool", "name": block.name,
-                          "input": block.input, "result": result_text[:200]})
-            results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": result_text,
-            })
-        return results
+        text = ""
+        tool_calls_raw: dict[int, dict] = {}
+        finish_reason = "stop"
+
+        for chunk in stream:
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            if delta.content:
+                text += delta.content
+                if on_chunk:
+                    on_chunk({"type": "chunk", "text": delta.content})
+
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls_raw:
+                        tool_calls_raw[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc.id:
+                        tool_calls_raw[idx]["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        tool_calls_raw[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        tool_calls_raw[idx]["arguments"] += tc.function.arguments
+
+        tool_calls = [tool_calls_raw[i] for i in sorted(tool_calls_raw)]
+        return text, tool_calls, finish_reason
+
+    def _execute_one_tool(self, name: str, arguments: str, on_chunk=None) -> str:
+        """执行单个工具调用，返回结果字符串"""
+        fn = self.registry.get(name)
+        if fn is None:
+            result = f"[错误] 未知工具: {name}"
+        else:
+            try:
+                kwargs = json.loads(arguments) if arguments else {}
+                result = str(fn(**kwargs))
+            except Exception as e:
+                result = f"[工具执行错误] {name}: {e}"
+
+        print(f"  → 工具: {name} → {result[:80]}")
+        if on_chunk:
+            on_chunk({"type": "tool", "name": name, "result": result[:200]})
+        return result
 
     def _save_output(self, task: dict, output: str) -> Path:
         """将输出保存到 workspace/outputs/{agent_name}/{task_id}.md"""

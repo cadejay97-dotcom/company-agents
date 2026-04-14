@@ -86,6 +86,18 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/state")
+async def get_state(_=Depends(require_auth)):
+    state_file = ROOT / "workspace" / "STATE.json"
+    if not state_file.exists():
+        return JSONResponse({"error": "STATE.json not found"}, status_code=404)
+    try:
+        import json
+        return JSONResponse(json.loads(state_file.read_text(encoding="utf-8")))
+    except Exception as exc:
+        return JSONResponse({"error": f"STATE.json unreadable: {exc}"}, status_code=500)
+
+
 @app.post("/api/run")
 async def run_task(request: Request, _=Depends(require_auth)):
     body = await request.json()

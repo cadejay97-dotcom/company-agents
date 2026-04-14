@@ -28,8 +28,24 @@ function renderChunk(chunk: Chunk) {
           {content.result ? ` ${String(content.result).slice(0, 180)}` : ""}
         </span>
       );
-    case "done":
+    case "done": {
+      const verdict = textValue(content.verdict);
+      if (verdict === "pass") {
+        return (
+          <span className="font-semibold text-emerald-400">
+            ✓ VERDICT: PASS · 完成
+          </span>
+        );
+      }
+      if (verdict === "fail") {
+        return (
+          <span className="font-semibold text-red-400">
+            ✗ VERDICT: FAIL · 下游任务已阻断
+          </span>
+        );
+      }
       return <span className="text-emerald-300">完成</span>;
+    }
     case "error":
       return (
         <span className="text-red-300">
